@@ -1,0 +1,96 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-[#0B0F19] text-slate-100;
+  }
+}
+
+/* Premium custom UI styles */
+.glass-panel {
+  background: rgba(22, 29, 48, 0.65);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.glass-panel-hover {
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.glass-panel-hover:hover {
+  background: rgba(22, 29, 48, 0.85);
+  border-color: rgba(99, 102, 241, 0.4);
+  box-shadow: 0 10px 30px -10px rgba(99, 102, 241, 0.15);
+  transform: translateY(-2px);
+}
+
+.gradient-text {
+  @apply bg-clip-text text-transparent bg-gradient-to-r from-indigo-400 via-purple-400 to-pink-400;
+}
+
+.gradient-bg {
+  background: radial-gradient(circle at top right, rgba(99, 102, 241, 0.08) 0%, transparent 60%),
+              radial-gradient(circle at bottom left, rgba(168, 85, 247, 0.05) 0%, transparent 50%),
+              #0B0F19;
+}
+
+/* Custom Scrollbar for modern feel */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0B0F19;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #1F293D;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #374151;
+}
+
+/* Pulse animation for uploading/transcribing states */
+@keyframes soft-pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.8;
+    transform: scale(0.98);
+  }
+}
+
+.animate-soft-pulse {
+  animation: soft-pulse 2s infinite ease-in-out;
+}
+
+/* Symmetrical audio wave bar dancing keyframes */
+@keyframes dance {
+  0%, 100% {
+    height: 4px;
+  }
+  50% {
+    height: 16px;
+  }
+}
+
+.animate-dance-1 {
+  animation: dance 0.65s ease-in-out infinite;
+}
+.animate-dance-2 {
+  animation: dance 0.85s ease-in-out infinite 0.15s;
+}
+.animate-dance-3 {
+  animation: dance 0.55s ease-in-out infinite 0.3s;
+}
+.animate-dance-4 {
+  animation: dance 0.75s ease-in-out infinite 0.45s;
+}
