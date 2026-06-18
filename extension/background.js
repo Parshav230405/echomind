@@ -163,7 +163,7 @@ async function createOffscreenDocument() {
 
   await chrome.offscreen.createDocument({
     url: 'offscreen.html',
-    reasons: ['userMedia', 'audioPlayback'],
+    reasons: ['USER_MEDIA', 'AUDIO_PLAYBACK'],
     justification: 'Capture tab audio stream to record meeting audio.'
   });
 }
