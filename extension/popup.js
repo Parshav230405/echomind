@@ -25,87 +25,102 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   let timerInterval = null;
 
-  // Initial UI check
-  await checkState();
+  // Event Listeners (Registered synchronously first to avoid initialization crashes)
+  if (openAppBtn) {
+    openAppBtn.addEventListener('click', openAppTab);
+  }
+  if (viewDashboardLink) {
+    viewDashboardLink.addEventListener('click', (e) => {
+      e.preventDefault();
+      openAppTab();
+    });
+  }
+
+  if (recordTriggerBtn) {
+    recordTriggerBtn.addEventListener('click', handleRecordClick);
+  }
+
+  // Initial UI check (Wrapped in try-catch so it never halts execution)
+  checkState().catch(err => console.error('[EchoMind] checkState error:', err));
 
   // Poll state occasionally while popup is open to keep timer and details synced
-  const statePoller = setInterval(checkState, 1000);
+  const statePoller = setInterval(() => {
+    checkState().catch(err => console.error('[EchoMind] Poll error:', err));
+  }, 1000);
   window.addEventListener('unload', () => clearInterval(statePoller));
 
-  // Event Listeners
-  openAppBtn.addEventListener('click', openAppTab);
-  viewDashboardLink.addEventListener('click', (e) => {
-    e.preventDefault();
-    openAppTab();
-  });
-
-  recordTriggerBtn.addEventListener('click', async () => {
-    const state = await getStorageData(['isRecording', 'meetingTitle']);
-    
-    if (state.isRecording) {
-      // Send stop command
-      chrome.runtime.sendMessage({ type: 'STOP_RECORDING' }, (response) => {
-        if (response && response.error) {
-          showStatus(response.error, true);
-        } else {
-          showStatus('Stopping recording and uploading...', false);
-          recordTriggerBtn.disabled = true;
-        }
-      });
-    } else {
-      // Validate title
-      let title = meetingTitleInput.value.trim();
-      if (!title) {
-        title = `Meeting - ${new Date().toLocaleDateString()}`;
-      }
-
-      // Query active tab to ensure we capture the correct one
-      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        if (!tabs || tabs.length === 0) {
-          showStatus('No active tab found to record.', true);
-          return;
-        }
-        
-        const activeTab = tabs[0];
-        // Don't record chrome:// system pages
-        if (activeTab.url && activeTab.url.startsWith('chrome://')) {
-          showStatus('Cannot capture browser system pages.', true);
-          return;
+  // Primary click handler for recording button
+  async function handleRecordClick() {
+    try {
+      const state = await getStorageData(['isRecording', 'meetingTitle']);
+      
+      if (state.isRecording) {
+        // Send stop command
+        chrome.runtime.sendMessage({ type: 'STOP_RECORDING' }, (response) => {
+          if (response && response.error) {
+            showStatus(response.error, true);
+          } else {
+            showStatus('Stopping recording and uploading...', false);
+            recordTriggerBtn.disabled = true;
+          }
+        });
+      } else {
+        // Validate title
+        let title = meetingTitleInput.value.trim();
+        if (!title) {
+          title = `Meeting - ${new Date().toLocaleDateString()}`;
         }
 
-        showStatus('Requesting tab capture permissions...', false);
-
-        // Call tabCapture inside the click listener context (user gesture is active!)
-        chrome.tabCapture.getMediaStreamId({ targetTabId: activeTab.id }, (streamId) => {
-          if (chrome.runtime.lastError) {
-            showStatus('Error capturing tab: ' + chrome.runtime.lastError.message, true);
-            console.error('[EchoMind Extension] Tab capture error:', chrome.runtime.lastError);
+        // Query active tab to ensure we capture the correct one
+        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+          if (!tabs || tabs.length === 0) {
+            showStatus('No active tab found to record.', true);
+            return;
+          }
+          
+          const activeTab = tabs[0];
+          // Don't record chrome:// system pages
+          if (activeTab.url && activeTab.url.startsWith('chrome://')) {
+            showStatus('Cannot capture browser system pages.', true);
             return;
           }
 
-          if (!streamId) {
-            showStatus('Failed to retrieve tab capture stream ID.', true);
-            return;
-          }
+          showStatus('Requesting tab capture permissions...', false);
 
-          // Send start command to service worker, passing the active stream ID
-          chrome.runtime.sendMessage({
-            type: 'START_RECORDING',
-            title: title,
-            tabId: activeTab.id,
-            streamId: streamId
-          }, (response) => {
-            if (response && response.error) {
-              showStatus(response.error, true);
-            } else {
-              showStatus('Recording tab audio...', false);
-              checkState();
+          // Call tabCapture inside the click listener context (user gesture is active!)
+          chrome.tabCapture.getMediaStreamId({ targetTabId: activeTab.id }, (streamId) => {
+            if (chrome.runtime.lastError) {
+              showStatus('Error capturing tab: ' + chrome.runtime.lastError.message, true);
+              console.error('[EchoMind Extension] Tab capture error:', chrome.runtime.lastError);
+              return;
             }
+
+            if (!streamId) {
+              showStatus('Failed to retrieve tab capture stream ID.', true);
+              return;
+            }
+
+            // Send start command to service worker, passing the active stream ID
+            chrome.runtime.sendMessage({
+              type: 'START_RECORDING',
+              title: title,
+              tabId: activeTab.id,
+              streamId: streamId
+            }, (response) => {
+              if (response && response.error) {
+                showStatus(response.error, true);
+              } else {
+                showStatus('Recording tab audio...', false);
+                checkState().catch(err => console.error(err));
+              }
+            });
           });
         });
-      });
+      }
+    } catch (err) {
+      showStatus('Interaction failed: ' + err.message, true);
     }
-  });
+  }
 
   // Check state and refresh UI
   async function checkState() {
@@ -189,9 +204,27 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
-  // Helpers
-  function openAppTab() {
-    chrome.tabs.create({ url: 'http://localhost:3000' });
+  async function openAppTab() {
+    let targetUrl = 'http://localhost:3000';
+    try {
+      const storage = await getStorageData(['api_url']);
+      if (storage.api_url) {
+        targetUrl = storage.api_url.replace(':5000', ':3000');
+      }
+    } catch (e) {
+      console.error('[EchoMind] Failed to get API URL from storage:', e);
+    }
+    
+    try {
+      if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.create) {
+        chrome.tabs.create({ url: targetUrl });
+      } else {
+        window.open(targetUrl, '_blank');
+      }
+    } catch (err) {
+      console.error('[EchoMind] Failed to create tab:', err);
+      window.open(targetUrl, '_blank');
+    }
   }
 
   function showStatus(msg, isError = false) {
