@@ -28,9 +28,13 @@ async function startCapture(streamId, meetingTitle) {
   title = meetingTitle || 'Recorded Meeting';
   startTime = Date.now();
 
+  let tabStream = null;
+  let micStream = null;
+  let audioCtx = null;
+
   try {
-    // 1. Capture stream using tab stream ID
-    const stream = await navigator.mediaDevices.getUserMedia({
+    // 1. Capture stream using tab stream ID (other participants' audio)
+    tabStream = await navigator.mediaDevices.getUserMedia({
       audio: {
         mandatory: {
           chromeMediaSource: 'tab',
@@ -40,13 +44,40 @@ async function startCapture(streamId, meetingTitle) {
       video: false
     });
 
-    // 2. Playback audio locally so the user can still hear the meeting!
-    // (Without this loopback, capturing the tab audio silences it for the user)
-    const audioCtx = new AudioContext();
-    const source = audioCtx.createMediaStreamSource(stream);
-    source.connect(audioCtx.destination);
+    // 2. Capture microphone audio stream (user's own voice)
+    try {
+      micStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true
+        },
+        video: false
+      });
+      console.log('[EchoMind Offscreen] Microphone stream captured successfully.');
+    } catch (micError) {
+      console.warn('[EchoMind Offscreen] Could not capture microphone (will record tab-only):', micError);
+    }
 
-    // 3. Set up MediaRecorder
+    // 3. Set up AudioContext for mixing
+    audioCtx = new AudioContext();
+    const tabSource = audioCtx.createMediaStreamSource(tabStream);
+    
+    // Create combined destination stream
+    const mixDestination = audioCtx.createMediaStreamDestination();
+
+    // Loopback tab audio to system speakers so the user can still hear the call
+    tabSource.connect(audioCtx.destination);
+    
+    // Connect tab audio to the recorder mix
+    tabSource.connect(mixDestination);
+
+    // Connect microphone audio to the recorder mix if available
+    if (micStream) {
+      const micSource = audioCtx.createMediaStreamSource(micStream);
+      micSource.connect(mixDestination);
+    }
+
+    // 4. Set up MediaRecorder to capture the mixed stream
     let mimeType = 'audio/webm;codecs=opus';
     if (!MediaRecorder.isTypeSupported(mimeType)) {
       mimeType = 'audio/ogg';
@@ -55,7 +86,8 @@ async function startCapture(streamId, meetingTitle) {
       mimeType = ''; // Let browser choose
     }
 
-    mediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+    const mixedStream = mixDestination.stream;
+    mediaRecorder = new MediaRecorder(mixedStream, mimeType ? { mimeType } : undefined);
     
     mediaRecorder.ondataavailable = (event) => {
       if (event.data && event.data.size > 0) {
@@ -64,9 +96,18 @@ async function startCapture(streamId, meetingTitle) {
     };
 
     mediaRecorder.onstop = async () => {
-      // Release tracks
-      stream.getTracks().forEach(track => track.stop());
-      audioCtx.close();
+      // Release all audio tracks
+      if (tabStream) {
+        tabStream.getTracks().forEach(track => track.stop());
+      }
+      if (micStream) {
+        micStream.getTracks().forEach(track => track.stop());
+      }
+      
+      // Close Web Audio context
+      if (audioCtx && audioCtx.state !== 'closed') {
+        await audioCtx.close();
+      }
 
       const durationSeconds = Math.round((Date.now() - startTime) / 1000);
       const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
@@ -82,6 +123,12 @@ async function startCapture(streamId, meetingTitle) {
 
   } catch (error) {
     console.error('[EchoMind Offscreen] Capture initialization failed:', error);
+    
+    // Clean up streams if partially initialized
+    if (tabStream) tabStream.getTracks().forEach(t => t.stop());
+    if (micStream) micStream.getTracks().forEach(t => t.stop());
+    if (audioCtx) audioCtx.close();
+    
     chrome.runtime.sendMessage({ type: 'RECORDING_FAILED', error: error.message });
   }
 }

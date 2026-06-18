@@ -74,6 +74,16 @@ document.addEventListener('DOMContentLoaded', async () => {
           title = `Meeting - ${new Date().toLocaleDateString()}`;
         }
 
+        showStatus('Requesting mic permissions...', false);
+
+        // Pre-request microphone access in popup to prompt the user
+        try {
+          const micAccess = await navigator.mediaDevices.getUserMedia({ audio: true });
+          micAccess.getTracks().forEach(track => track.stop()); // release immediately
+        } catch (micErr) {
+          console.warn('[EchoMind] Microphone permission denied (will capture tab audio only):', micErr);
+        }
+
         // Query active tab to ensure we capture the correct one
         chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
           if (!tabs || tabs.length === 0) {
