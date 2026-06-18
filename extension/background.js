@@ -143,8 +143,15 @@ async function handleStartRecording(title, tabId, streamId) {
 async function handleStopRecording() {
   chrome.storage.local.set({ uploadStatus: 'uploading' });
   
-  // Send stop command to offscreen
-  await chrome.runtime.sendMessage({ type: 'STOP_RECORDING' });
+  // Retrieve credentials from local storage
+  const storage = await chrome.storage.local.get(['echomind_token', 'api_url']);
+  
+  // Send stop command to offscreen along with authorization credentials
+  await chrome.runtime.sendMessage({
+    type: 'STOP_RECORDING',
+    token: storage.echomind_token,
+    apiUrl: storage.api_url
+  });
 }
 
 // State cleanups

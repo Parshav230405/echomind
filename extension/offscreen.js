@@ -6,6 +6,8 @@ let mediaRecorder = null;
 let audioChunks = [];
 let startTime = null;
 let title = '';
+let authToken = '';
+let apiHost = '';
 
 // Listen for messages from background script
 chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
@@ -13,6 +15,8 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
     startCapture(message.streamId, message.title);
     sendResponse({ success: true });
   } else if (message.type === 'STOP_RECORDING') {
+    authToken = message.token;
+    apiHost = message.apiUrl;
     stopCapture();
     sendResponse({ success: true });
   }
@@ -92,13 +96,12 @@ async function uploadAudio(blob, durationSeconds) {
   chrome.runtime.sendMessage({ type: 'UPLOAD_STAGE_CHANGE', stage: 'uploading' });
 
   try {
-    // 1. Fetch Auth Token and API URL from storage
-    const storage = await chrome.storage.local.get(['echomind_token', 'api_url']);
-    const token = storage.echomind_token;
-    const apiUrl = storage.api_url || 'http://localhost:5000';
+    // 1. Use Auth Token and API URL passed from background page
+    const token = authToken;
+    const apiUrl = apiHost || 'http://localhost:5000';
 
     if (!token) {
-      throw new Error('User session not found. Please open EchoMind page and log in.');
+      throw new Error('User session credentials missing. Please reload extension and refresh tab.');
     }
 
     // 2. Build FormData
