@@ -1,6 +1,6 @@
 // ============================================================
-   ECHOMIND CHROME EXTENSION — SERVICE WORKER
-   ============================================================
+// ECHOMIND CHROME EXTENSION — SERVICE WORKER
+// ============================================================
 
 // Ensure storage states are initialized on install
 chrome.runtime.onInstalled.addListener(() => {

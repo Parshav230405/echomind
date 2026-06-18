@@ -1,6 +1,6 @@
 // ============================================================
-   ECHOMIND CHROME EXTENSION — POPUP LOGIC
-   ============================================================
+// ECHOMIND CHROME EXTENSION — POPUP LOGIC
+// ============================================================
 
 document.addEventListener('DOMContentLoaded', async () => {
   // Elements

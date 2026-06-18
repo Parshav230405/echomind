@@ -1,6 +1,6 @@
 // ============================================================
-   ECHOMIND CHROME EXTENSION — OFFSCREEN RECORDER
-   ============================================================
+// ECHOMIND CHROME EXTENSION — OFFSCREEN RECORDER
+// ============================================================
 
 let mediaRecorder = null;
 let audioChunks = [];
