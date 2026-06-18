@@ -68,23 +68,40 @@ document.addEventListener('DOMContentLoaded', async () => {
         
         const activeTab = tabs[0];
         // Don't record chrome:// system pages
-        if (activeTab.url.startsWith('chrome://')) {
+        if (activeTab.url && activeTab.url.startsWith('chrome://')) {
           showStatus('Cannot capture browser system pages.', true);
           return;
         }
 
-        // Send start command
-        chrome.runtime.sendMessage({
-          type: 'START_RECORDING',
-          title: title,
-          tabId: activeTab.id
-        }, (response) => {
-          if (response && response.error) {
-            showStatus(response.error, true);
-          } else {
-            showStatus('Recording tab audio...', false);
-            checkState();
+        showStatus('Requesting tab capture permissions...', false);
+
+        // Call tabCapture inside the click listener context (user gesture is active!)
+        chrome.tabCapture.getMediaStreamId({ targetTabId: activeTab.id }, (streamId) => {
+          if (chrome.runtime.lastError) {
+            showStatus('Error capturing tab: ' + chrome.runtime.lastError.message, true);
+            console.error('[EchoMind Extension] Tab capture error:', chrome.runtime.lastError);
+            return;
           }
+
+          if (!streamId) {
+            showStatus('Failed to retrieve tab capture stream ID.', true);
+            return;
+          }
+
+          // Send start command to service worker, passing the active stream ID
+          chrome.runtime.sendMessage({
+            type: 'START_RECORDING',
+            title: title,
+            tabId: activeTab.id,
+            streamId: streamId
+          }, (response) => {
+            if (response && response.error) {
+              showStatus(response.error, true);
+            } else {
+              showStatus('Recording tab audio...', false);
+              checkState();
+            }
+          });
         });
       });
     }

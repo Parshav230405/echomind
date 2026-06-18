@@ -21,14 +21,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'SYNC_AUTH') {
     chrome.storage.local.set({
       echomind_token: message.token,
-      user_profile: message.user
+      user_profile: message.user,
+      api_url: message.apiUrl
     });
     console.log('[EchoMind Background] Auth credentials synchronized.');
     sendResponse({ success: true });
   }
 
   else if (message.type === 'CLEAR_AUTH') {
-    chrome.storage.local.remove(['echomind_token', 'user_profile']);
+    chrome.storage.local.remove(['echomind_token', 'user_profile', 'api_url']);
     console.log('[EchoMind Background] Auth credentials cleared.');
     sendResponse({ success: true });
   }
@@ -44,7 +45,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   else if (message.type === 'START_RECORDING') {
-    handleStartRecording(message.title, message.tabId)
+    handleStartRecording(message.title, message.tabId, message.streamId)
       .then(() => sendResponse({ success: true }))
       .catch((err) => sendResponse({ error: err.message || 'Failed to start recording.' }));
     return true;
@@ -103,28 +104,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 // Helper for starting offscreen record capture
-async function handleStartRecording(title, tabId) {
+async function handleStartRecording(title, tabId, streamId) {
   let targetTabId = tabId;
+  let targetStreamId = streamId;
+
+  if (!targetStreamId) {
+    throw new Error('Tab capture stream ID is missing.');
+  }
   
   // If tabId was not passed, query the active tab in current window
   if (!targetTabId) {
     const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tabs || tabs.length === 0) {
-      throw new Error('No active browser tab found to capture.');
+    if (tabs && tabs.length > 0) {
+      targetTabId = tabs[0].id;
     }
-    targetTabId = tabs[0].id;
   }
-
-  // Get streamId for tab audio capture
-  const streamId = await new Promise((resolve, reject) => {
-    chrome.tabCapture.getMediaStreamId({ targetTabId: targetTabId }, (id) => {
-      if (chrome.runtime.lastError) {
-        reject(new Error(chrome.runtime.lastError.message));
-      } else {
-        resolve(id);
-      }
-    });
-  });
 
   // Open offscreen document if not exists
   await createOffscreenDocument();
@@ -140,7 +134,7 @@ async function handleStartRecording(title, tabId) {
   // Instruct offscreen document to begin recording
   await chrome.runtime.sendMessage({
     type: 'START_RECORDING',
-    streamId: streamId,
+    streamId: targetStreamId,
     title: title
   });
 }

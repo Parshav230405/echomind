@@ -92,9 +92,10 @@ async function uploadAudio(blob, durationSeconds) {
   chrome.runtime.sendMessage({ type: 'UPLOAD_STAGE_CHANGE', stage: 'uploading' });
 
   try {
-    // 1. Fetch Auth Token from storage
-    const storage = await chrome.storage.local.get(['echomind_token']);
+    // 1. Fetch Auth Token and API URL from storage
+    const storage = await chrome.storage.local.get(['echomind_token', 'api_url']);
     const token = storage.echomind_token;
+    const apiUrl = storage.api_url || 'http://localhost:5000';
 
     if (!token) {
       throw new Error('User session not found. Please open EchoMind page and log in.');
@@ -107,8 +108,8 @@ async function uploadAudio(blob, durationSeconds) {
     formData.append('title', title);
     formData.append('duration_seconds', durationSeconds.toString());
 
-    // 3. POST request to backend server
-    const response = await fetch('http://localhost:5000/api/meetings/upload', {
+    // 3. POST request to dynamic backend server
+    const response = await fetch(`${apiUrl}/api/meetings/upload`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${token}`

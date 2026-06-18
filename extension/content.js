@@ -5,7 +5,7 @@
 const HOSTNAME = window.location.hostname;
 
 // 1. SYNC AUTH FROM ECHOMIND APP
-if (HOSTNAME === 'localhost' || HOSTNAME.includes('echomind')) {
+if (HOSTNAME === 'localhost' || HOSTNAME === '127.0.0.1' || HOSTNAME.includes('echomind')) {
   // Sync on load
   syncAuthWithExtension();
 
@@ -28,8 +28,15 @@ function syncAuthWithExtension() {
       const payloadBase64 = token.split('.')[1];
       const payload = JSON.parse(atob(payloadBase64));
       
+      const origin = window.location.origin;
+      let apiUrl = origin;
+      // If frontend runs on port 3000, target backend on port 5000
+      if (origin.includes(':3000')) {
+        apiUrl = origin.replace(':3000', ':5000');
+      }
+
       // Fetch user details from API using token to get name
-      fetch('/api/auth/me', {
+      fetch(`${apiUrl}/api/auth/me`, {
         headers: { 'Authorization': `Bearer ${token}` }
       })
       .then(res => res.json())
@@ -38,7 +45,8 @@ function syncAuthWithExtension() {
           chrome.runtime.sendMessage({
             type: 'SYNC_AUTH',
             token: token,
-            user: data.user
+            user: data.user,
+            apiUrl: apiUrl
           });
         }
       })
@@ -47,7 +55,8 @@ function syncAuthWithExtension() {
         chrome.runtime.sendMessage({
           type: 'SYNC_AUTH',
           token: token,
-          user: { id: payload.userId, name: 'Active User' }
+          user: { id: payload.userId, name: 'Active User' },
+          apiUrl: apiUrl
         });
       });
     } catch (e) {
@@ -172,21 +181,28 @@ if (isMeetingSite) {
             setUiStopped();
           });
         } else {
-          // Start recording
-          const meetingTitle = getMeetingTitle();
-          chrome.runtime.sendMessage({
-            type: 'START_RECORDING',
-            title: meetingTitle
-          }, (response) => {
-            if (response && response.error) {
-              alert('EchoMind: ' + response.error);
-            } else {
-              setUiRecording(Date.now());
-            }
-          });
+          // Inform user that tab capture must be started from the popup due to Chrome security policies
+          showFloatingNotification();
         }
       });
     });
+  }
+
+  function showFloatingNotification() {
+    const widget = document.getElementById('echomind-floating-trigger');
+    const textLabel = document.getElementById('em-text');
+    if (!widget || !textLabel) return;
+    
+    const originalText = textLabel.textContent;
+    textLabel.textContent = 'Open Extension Popup to Start!';
+    widget.style.background = 'rgba(244, 63, 94, 0.2)';
+    widget.style.borderColor = 'rgba(244, 63, 94, 0.4)';
+    
+    setTimeout(() => {
+      widget.style.background = 'rgba(15, 22, 35, 0.85)';
+      widget.style.borderColor = 'rgba(255, 255, 255, 0.08)';
+      textLabel.textContent = originalText;
+    }, 4000);
   }
 
   function removeFloatingWidget() {
