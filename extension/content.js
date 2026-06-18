@@ -3,15 +3,19 @@
    ============================================================
 
 const HOSTNAME = window.location.hostname;
+console.log('[EchoMind Extension] Content script loaded on:', window.location.href);
 
 // 1. SYNC AUTH FROM ECHOMIND APP
 if (HOSTNAME === 'localhost' || HOSTNAME === '127.0.0.1' || HOSTNAME.includes('echomind')) {
+  console.log('[EchoMind Extension] EchoMind app page matched. Initializing sync listener...');
+  
   // Sync on load
   syncAuthWithExtension();
 
   // Listen for storage events (e.g. login/logout)
   window.addEventListener('storage', (e) => {
     if (e.key === 'echomind_token') {
+      console.log('[EchoMind Extension] Storage event detected: echomind_token changed.');
       syncAuthWithExtension();
     }
   });
@@ -22,6 +26,8 @@ if (HOSTNAME === 'localhost' || HOSTNAME === '127.0.0.1' || HOSTNAME.includes('e
 
 function syncAuthWithExtension() {
   const token = localStorage.getItem('echomind_token');
+  console.log('[EchoMind Extension] syncAuthWithExtension check. Token found:', !!token);
+  
   if (token) {
     // Parse JWT to get user details
     try {
@@ -35,13 +41,19 @@ function syncAuthWithExtension() {
         apiUrl = origin.replace(':3000', ':5000');
       }
 
+      console.log('[EchoMind Extension] Attempting connection check with API:', `${apiUrl}/api/auth/me`);
+
       // Fetch user details from API using token to get name
       fetch(`${apiUrl}/api/auth/me`, {
         headers: { 'Authorization': `Bearer ${token}` }
       })
-      .then(res => res.json())
+      .then(res => {
+        console.log('[EchoMind Extension] API Response status:', res.status);
+        return res.json();
+      })
       .then(data => {
         if (data.user) {
+          console.log('[EchoMind Extension] Synced with user profile:', data.user.name);
           chrome.runtime.sendMessage({
             type: 'SYNC_AUTH',
             token: token,
@@ -51,6 +63,7 @@ function syncAuthWithExtension() {
         }
       })
       .catch(err => {
+        console.warn('[EchoMind Extension] API fetch error (offline fallback):', err.message);
         // Fallback to basic payload info if API fetch fails
         chrome.runtime.sendMessage({
           type: 'SYNC_AUTH',
@@ -60,10 +73,11 @@ function syncAuthWithExtension() {
         });
       });
     } catch (e) {
-      console.error('[EchoMind Extension] Error parsing token', e);
+      console.error('[EchoMind Extension] Error parsing token:', e);
     }
   } else {
     // Logged out
+    console.log('[EchoMind Extension] No token present. Sending clear auth request.');
     chrome.runtime.sendMessage({ type: 'CLEAR_AUTH' });
   }
 }
