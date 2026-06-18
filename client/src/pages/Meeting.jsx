@@ -1,534 +1,472 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { ArrowLeft, MessageSquare, FileText, ClipboardList, CheckCircle, Send, Play, Pause, Volume2, VolumeX, Calendar, Clock, Sparkles } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import {
+  ArrowLeft, Play, Pause, Volume2, VolumeX, SkipBack, SkipForward,
+  Clock, Calendar, FileText, CheckSquare, MessageSquare, Send,
+  ListChecks, Bot, Sparkles, BadgeCheck, Square, Mic
+} from 'lucide-react';
+
+const formatTime = (s) => {
+  if (isNaN(s) || !isFinite(s)) return '0:00';
+  const m = Math.floor(s / 60);
+  const sec = Math.floor(s % 60);
+  return `${m}:${sec.toString().padStart(2, '0')}`;
+};
+const formatDate = (d) => new Date(d).toLocaleDateString(undefined, { weekday: 'short', month: 'long', day: 'numeric', year: 'numeric' });
+const formatDuration = (s) => {
+  if (!s) return '—';
+  const m = Math.floor(s / 60), sec = s % 60;
+  return m === 0 ? `${sec}s` : `${m}m ${sec > 0 ? ` ${sec}s` : ''}`;
+};
+
+const TABS = [
+  { id: 'summary',   label: 'Summary',      icon: Sparkles },
+  { id: 'actions',   label: 'Action Items', icon: ListChecks },
+  { id: 'decisions', label: 'Decisions',    icon: BadgeCheck },
+  { id: 'transcript',label: 'Transcript',   icon: FileText },
+];
+
+const SPEEDS = [1, 1.25, 1.5, 2];
 
 export const Meeting = ({ meetingId, onViewChange }) => {
   const { apiFetch } = useAuth();
-  const [meeting, setMeeting] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState('summary'); // 'summary' | 'action_items' | 'decisions' | 'transcript'
-  
-  // Chat States
-  const [chats, setChats] = useState([]);
-  const [chatInput, setChatInput] = useState('');
+  const [meeting, setMeeting]       = useState(null);
+  const [loading, setLoading]       = useState(true);
+  const [activeTab, setActiveTab]   = useState('summary');
+  const [chatMessages, setChatMessages] = useState([]);
+  const [chatInput, setChatInput]   = useState('');
   const [chatLoading, setChatLoading] = useState(false);
-  const chatEndRef = useRef(null);
-
-  // Audio Playback States
-  const audioRef = useRef(null);
-  const [isPlaying, setIsPlaying] = useState(false);
+  const [isPlaying, setIsPlaying]   = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [audioDuration, setAudioDuration] = useState(0);
-  const [volume, setVolume] = useState(1);
-  const [isMuted, setIsMuted] = useState(false);
-  const [playbackRate, setPlaybackRate] = useState(1);
+  const [volume, setVolume]         = useState(1);
+  const [muted, setMuted]           = useState(false);
+  const [speedIdx, setSpeedIdx]     = useState(0);
+  const [checkedItems, setCheckedItems] = useState({});
 
-  // Load meeting data
-  const loadMeetingDetails = async () => {
-    try {
-      const data = await apiFetch(`/api/meetings/${meetingId}`);
-      setMeeting(data);
-      
-      // Load chats
-      const chatData = await apiFetch(`/api/meetings/${meetingId}/chats`);
-      setChats(chatData);
-    } catch (err) {
-      console.error(err);
-      alert('Failed to retrieve meeting details: ' + err.message);
-      onViewChange('dashboard');
-    } finally {
-      setLoading(false);
-    }
-  };
+  const audioRef   = useRef(null);
+  const chatEndRef = useRef(null);
+  const saveTimer  = useRef(null);
 
+  // Load meeting
   useEffect(() => {
-    loadMeetingDetails();
+    const load = async () => {
+      try {
+        const data = await apiFetch(`/api/meetings/${meetingId}`);
+        if (typeof data.action_items === 'string') {
+          try { data.action_items = JSON.parse(data.action_items); } catch { data.action_items = []; }
+        }
+        if (typeof data.decisions === 'string') {
+          try { data.decisions = JSON.parse(data.decisions); } catch { data.decisions = []; }
+        }
+        setMeeting(data);
+        setCheckedItems(typeof data.checked_items === 'object' ? (data.checked_items || {}) : {});
+      } catch (e) { console.error(e); }
+      finally { setLoading(false); }
+    };
+    load();
   }, [meetingId]);
 
-  // Auto scroll chat to bottom
+  // Load chat history
+  useEffect(() => {
+    if (!meetingId) return;
+    apiFetch(`/api/meetings/${meetingId}/chats`).then(d => {
+      if (Array.isArray(d)) setChatMessages(d);
+    }).catch(() => {});
+  }, [meetingId]);
+
+  // Auto-scroll chat
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [chats, chatLoading]);
+  }, [chatMessages, chatLoading]);
 
-  // Action items local checked state toggling
-  const [checkedItems, setCheckedItems] = useState({});
-  const toggleCheck = (idx) => {
-    setCheckedItems(prev => ({
-      ...prev,
-      [idx]: !prev[idx]
-    }));
+  // Audio events
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    const onTime  = () => setCurrentTime(audio.currentTime);
+    const onMeta  = () => setAudioDuration(audio.duration);
+    const onEnded = () => setIsPlaying(false);
+    audio.addEventListener('timeupdate', onTime);
+    audio.addEventListener('loadedmetadata', onMeta);
+    audio.addEventListener('ended', onEnded);
+    return () => {
+      audio.removeEventListener('timeupdate', onTime);
+      audio.removeEventListener('loadedmetadata', onMeta);
+      audio.removeEventListener('ended', onEnded);
+    };
+  }, [meeting]);
+
+  const togglePlay = () => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (isPlaying) { audio.pause(); setIsPlaying(false); }
+    else { audio.play(); setIsPlaying(true); }
   };
 
-  // Submit chat question
-  const handleChatSubmit = async (e) => {
-    e.preventDefault();
-    if (!chatInput.trim() || chatLoading) return;
+  const skip = (delta) => {
+    if (!audioRef.current) return;
+    audioRef.current.currentTime = Math.max(0, Math.min(audioDuration, currentTime + delta));
+  };
 
-    const query = chatInput.trim();
+  const cycleSpeed = () => {
+    const next = (speedIdx + 1) % SPEEDS.length;
+    setSpeedIdx(next);
+    if (audioRef.current) audioRef.current.playbackRate = SPEEDS[next];
+  };
+
+  const toggleMute = () => {
+    setMuted(m => {
+      if (audioRef.current) audioRef.current.muted = !m;
+      return !m;
+    });
+  };
+
+  const handleVolumeChange = (v) => {
+    setVolume(v);
+    if (audioRef.current) audioRef.current.volume = v;
+  };
+
+  const handleScrub = (v) => {
+    setCurrentTime(v);
+    if (audioRef.current) audioRef.current.currentTime = v;
+  };
+
+  // Checkbox toggle + debounced save
+  const toggleCheck = useCallback((idx) => {
+    setCheckedItems(prev => {
+      const updated = { ...prev, [idx]: !prev[idx] };
+      clearTimeout(saveTimer.current);
+      saveTimer.current = setTimeout(() => {
+        apiFetch(`/api/meetings/${meetingId}/check`, {
+          method: 'PATCH',
+          body: { checkedItems: updated }
+        }).catch(() => {});
+      }, 800);
+      return updated;
+    });
+  }, [meetingId, apiFetch]);
+
+  // Send chat
+  const sendChat = async () => {
+    const msg = chatInput.trim();
+    if (!msg || chatLoading) return;
     setChatInput('');
-    
-    // Add user message locally first
-    setChats(prev => [...prev, { role: 'user', content: query }]);
+    setChatMessages(prev => [...prev, { role: 'user', content: msg }]);
     setChatLoading(true);
-
     try {
-      const data = await apiFetch(`/api/meetings/${meetingId}/chats`, {
+      const resp = await apiFetch(`/api/meetings/${meetingId}/chats`, {
         method: 'POST',
-        body: { message: query }
+        body: { message: msg }
       });
-      // Add assistant response
-      setChats(prev => [...prev, { role: 'assistant', content: data.reply }]);
-    } catch (err) {
-      console.error(err);
-      setChats(prev => [...prev, { role: 'assistant', content: 'Sorry, I failed to process your request. Please check that OpenAI API keys are correctly set.' }]);
+      setChatMessages(prev => [...prev, { role: 'assistant', content: resp.reply || resp.content || '...' }]);
+    } catch (e) {
+      setChatMessages(prev => [...prev, { role: 'assistant', content: 'Sorry, I encountered an error. Please try again.' }]);
     } finally {
       setChatLoading(false);
     }
   };
 
-  const handlePlayPause = () => {
-    if (!audioRef.current) return;
-    if (isPlaying) {
-      audioRef.current.pause();
-      setIsPlaying(false);
-    } else {
-      audioRef.current.play();
-      setIsPlaying(true);
-    }
-  };
-
-  const handleTimeUpdate = () => {
-    if (audioRef.current) {
-      setCurrentTime(audioRef.current.currentTime);
-    }
-  };
-
-  const handleLoadedMetadata = () => {
-    if (audioRef.current) {
-      setAudioDuration(audioRef.current.duration);
-    }
-  };
-
-  const handleAudioEnded = () => {
-    setIsPlaying(false);
-    setCurrentTime(0);
-    if (audioRef.current) {
-      audioRef.current.currentTime = 0;
-    }
-  };
-
-  const handleScrub = (e) => {
-    if (audioRef.current) {
-      const seekTime = parseFloat(e.target.value);
-      audioRef.current.currentTime = seekTime;
-      setCurrentTime(seekTime);
-    }
-  };
-
-  const handleSpeedCycle = () => {
-    let nextRate = 1;
-    if (playbackRate === 1) nextRate = 1.25;
-    else if (playbackRate === 1.25) nextRate = 1.5;
-    else if (playbackRate === 1.5) nextRate = 2;
-    else nextRate = 1;
-
-    setPlaybackRate(nextRate);
-    if (audioRef.current) {
-      audioRef.current.playbackRate = nextRate;
-    }
-  };
-
-  const toggleMute = () => {
-    if (audioRef.current) {
-      audioRef.current.muted = !isMuted;
-      setIsMuted(!isMuted);
-    }
-  };
-
-  const handleVolumeChange = (e) => {
-    const val = parseFloat(e.target.value);
-    setVolume(val);
-    if (audioRef.current) {
-      audioRef.current.volume = val;
-      audioRef.current.muted = val === 0;
-      setIsMuted(val === 0);
-    }
-  };
-
-  // Timer format (e.g. 02:45)
-  const formatTime = (secs) => {
-    if (isNaN(secs)) return '00:00';
-    const minutes = Math.floor(secs / 60);
-    const seconds = Math.floor(secs % 60);
-    return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-  };
-
   if (loading) {
     return (
-      <div className="flex flex-col items-center justify-center py-40 space-y-4">
-        <div className="w-10 h-10 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin" />
-        <p className="text-sm text-slate-400">Loading meeting AI insights...</p>
+      <div className="space-y-6 max-w-4xl mx-auto">
+        {[1,2,3].map(i => <div key={i} className="skeleton-line h-20 rounded-2xl" />)}
       </div>
     );
   }
 
-  if (!meeting) return null;
-
-  // Format helper for duration
-  const formatDuration = (seconds) => {
-    if (!seconds) return '0s';
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    if (mins === 0) return `${secs}s`;
-    return `${mins}m ${secs}s`;
-  };
-
-  const formatDate = (dateStr) => {
-    const d = new Date(dateStr);
-    return d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' });
-  };
-
-  return (
-    <div className="space-y-6 max-w-6xl mx-auto pb-10">
-      {/* Header breadcrumb & title */}
-      <div className="flex flex-col gap-3">
-        <button
-          onClick={() => onViewChange('dashboard')}
-          className="flex items-center gap-1.5 text-xs font-semibold text-slate-400 hover:text-white transition-colors w-fit"
-        >
-          <ArrowLeft className="w-4 h-4" />
+  if (!meeting) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[50vh] text-center">
+        <div className="p-4 bg-slate-900/60 rounded-2xl text-slate-600 mb-4 border border-slate-800">
+          <Mic className="w-8 h-8" />
+        </div>
+        <p className="text-slate-400 font-semibold">Meeting not found</p>
+        <button onClick={() => onViewChange('dashboard')} className="mt-4 text-xs text-indigo-400 hover:text-indigo-300 underline">
           Back to Dashboard
         </button>
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-3">
-              <h2 className="text-2xl md:text-3xl font-extrabold text-white tracking-tight">{meeting.title}</h2>
-              {meeting.is_mock && (
-                <span className="px-2.5 py-0.5 text-[10px] font-bold bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded-full animate-pulse shrink-0">
-                  Mock Mode
-                </span>
-              )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6 max-w-4xl mx-auto">
+
+      {/* Audio (hidden) */}
+      {meeting.audio_filename && (
+        <audio ref={audioRef} src={`/api/uploads/${meeting.audio_filename}`} preload="metadata" />
+      )}
+
+      {/* ── BACK BUTTON ── */}
+      <motion.button
+        initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.3 }}
+        onClick={() => onViewChange('dashboard')}
+        className="flex items-center gap-2 text-xs font-semibold text-slate-500 hover:text-indigo-400 transition-colors group"
+      >
+        <ArrowLeft className="w-4 h-4 group-hover:-translate-x-0.5 transition-transform" />
+        Back to Dashboard
+      </motion.button>
+
+      {/* ── HEADER ── */}
+      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4, delay: 0.05 }}>
+        <div className="flex flex-wrap items-center gap-2 mb-2">
+          {meeting.is_mock && (
+            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-500/10 text-amber-400 text-[10px] font-bold border border-amber-500/20">
+              <Sparkles className="w-3 h-3" /> AI Mock Mode
+            </span>
+          )}
+        </div>
+        <h1 className="text-2xl md:text-3xl font-extrabold text-white tracking-tight leading-tight">
+          {meeting.title}
+        </h1>
+        <div className="flex flex-wrap items-center gap-4 mt-3">
+          <span className="flex items-center gap-1.5 text-xs text-slate-500 font-medium">
+            <Calendar className="w-3.5 h-3.5 text-slate-600" />
+            {formatDate(meeting.created_at)}
+          </span>
+          <span className="flex items-center gap-1.5 text-xs text-slate-500 font-medium">
+            <Clock className="w-3.5 h-3.5 text-slate-600" />
+            {formatDuration(meeting.duration_seconds)}
+          </span>
+        </div>
+      </motion.div>
+
+      {/* ── AUDIO PLAYER ── */}
+      {meeting.audio_filename && (
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4, delay: 0.1 }}
+          className="glass-panel rounded-2xl p-5 border border-white/5">
+          <div className="flex items-center gap-2 mb-4">
+            <div className="p-1.5 rounded-lg bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+              <Volume2 className="w-3.5 h-3.5" />
             </div>
-            <div className="flex flex-wrap items-center gap-4 mt-2 text-xs text-slate-400 font-medium">
-              <span className="flex items-center gap-1">
-                <Calendar className="w-4 h-4 text-slate-500" />
-                {formatDate(meeting.created_at)}
-              </span>
-              <span className="flex items-center gap-1">
-                <Clock className="w-4 h-4 text-slate-500" />
-                {formatDuration(meeting.duration_seconds)}
-              </span>
+            <span className="text-xs font-bold text-slate-300">Audio Recording</span>
+            {/* Dancing wave bars */}
+            <div className="flex items-end gap-[2px] ml-2 h-4">
+              {[1,2,3,4].map(i => (
+                <span key={i}
+                  className={`waveform-bar ${isPlaying ? `animate-dance-${i}` : 'h-1'}`}
+                  style={{ height: isPlaying ? undefined : '4px' }}
+                />
+              ))}
             </div>
           </div>
-        </div>
-      </div>
 
-      {/* Premium Custom Audio Player Card */}
-      {meeting.audio_filename && (
-        <div className="glass-panel p-5 rounded-3xl border border-white/5 shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-6 bg-slate-900/40 relative overflow-hidden">
-          {/* Hidden HTML Audio Element */}
-          <audio
-            ref={audioRef}
-            src={`/api/uploads/${meeting.audio_filename}`}
-            onTimeUpdate={handleTimeUpdate}
-            onLoadedMetadata={handleLoadedMetadata}
-            onEnded={handleAudioEnded}
-            className="hidden"
-          />
+          {/* Scrubber */}
+          <div className="mb-3">
+            <input type="range" min={0} max={audioDuration || 100} step={0.1} value={currentTime}
+              onChange={e => handleScrub(parseFloat(e.target.value))}
+              className="w-full h-1.5 appearance-none rounded-full bg-slate-800 cursor-pointer"
+              style={{ accentColor: '#6366F1' }}
+            />
+            <div className="flex justify-between text-[10px] text-slate-600 mt-1">
+              <span>{formatTime(currentTime)}</span>
+              <span>{formatTime(audioDuration)}</span>
+            </div>
+          </div>
 
-          {/* Left Block: Controls & Speed */}
-          <div className="flex items-center gap-4">
-            <button
-              onClick={handlePlayPause}
-              className="w-12 h-12 flex items-center justify-center bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl shadow-lg shadow-indigo-600/15 transition-all outline-none shrink-0"
-            >
-              {isPlaying ? (
-                <Pause className="w-5 h-5" />
-              ) : (
-                <Play className="w-5 h-5 fill-white ml-0.5" />
-              )}
+          {/* Controls */}
+          <div className="flex items-center gap-3 flex-wrap">
+            <button onClick={() => skip(-10)} className="p-2 text-slate-500 hover:text-white hover:bg-white/5 rounded-xl transition-all" title="-10s">
+              <SkipBack className="w-4 h-4" />
             </button>
+            <button onClick={togglePlay}
+              className="w-11 h-11 rounded-full bg-gradient-to-br from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 text-white flex items-center justify-center shadow-lg shadow-indigo-600/30 transition-all">
+              {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5 ml-0.5" />}
+            </button>
+            <button onClick={() => skip(10)} className="p-2 text-slate-500 hover:text-white hover:bg-white/5 rounded-xl transition-all" title="+10s">
+              <SkipForward className="w-4 h-4" />
+            </button>
+            <button onClick={cycleSpeed}
+              className="px-2.5 py-1.5 text-[10px] font-bold text-indigo-400 bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/20 rounded-lg transition-all">
+              {SPEEDS[speedIdx]}×
+            </button>
+            <div className="flex items-center gap-2 ml-auto">
+              <button onClick={toggleMute} className="p-1.5 text-slate-500 hover:text-white rounded-lg transition-all">
+                {muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+              </button>
+              <input type="range" min={0} max={1} step={0.05} value={muted ? 0 : volume}
+                onChange={e => handleVolumeChange(parseFloat(e.target.value))}
+                className="w-20 h-1.5 appearance-none rounded-full bg-slate-800 cursor-pointer"
+                style={{ accentColor: '#6366F1' }}
+              />
+            </div>
+          </div>
+        </motion.div>
+      )}
 
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-bold text-white">Audio Playback</span>
-                {/* Dancing Wave Animation */}
-                {isPlaying && (
-                  <div className="flex items-end gap-[3px] h-3.5 w-6 pb-0.5">
-                    <span className="w-0.5 bg-indigo-400 rounded-full animate-dance-1" style={{ height: '4px' }} />
-                    <span className="w-0.5 bg-indigo-400 rounded-full animate-dance-2" style={{ height: '8px' }} />
-                    <span className="w-0.5 bg-indigo-400 rounded-full animate-dance-3" style={{ height: '6px' }} />
-                    <span className="w-0.5 bg-indigo-400 rounded-full animate-dance-4" style={{ height: '10px' }} />
-                  </div>
-                )}
+      {/* ── TABS ── */}
+      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4, delay: 0.15 }}>
+        <div className="flex p-1 bg-slate-950/60 rounded-2xl border border-slate-800/80 gap-1">
+          {TABS.map(({ id, label, icon: Icon }) => (
+            <button key={id} onClick={() => setActiveTab(id)}
+              className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-[11px] font-semibold rounded-xl transition-all duration-200 ${
+                activeTab === id
+                  ? 'bg-gradient-to-r from-indigo-600 to-indigo-500 text-white shadow-lg shadow-indigo-600/20'
+                  : 'text-slate-500 hover:text-slate-300'
+              }`}>
+              <Icon className="w-3.5 h-3.5" />
+              <span className="hidden sm:block">{label}</span>
+            </button>
+          ))}
+        </div>
+      </motion.div>
+
+      {/* ── TAB CONTENT ── */}
+      <AnimatePresence mode="wait">
+        <motion.div key={activeTab}
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -8 }}
+          transition={{ duration: 0.2 }}>
+
+          {/* SUMMARY */}
+          {activeTab === 'summary' && (
+            <div className="glass-panel rounded-2xl p-6 border border-white/5 border-l-4 border-l-indigo-500">
+              <div className="flex items-center gap-2 mb-4">
+                <Sparkles className="w-4 h-4 text-indigo-400" />
+                <span className="text-xs font-bold text-indigo-400 uppercase tracking-widest">AI Summary</span>
               </div>
-              <p className="text-[10px] text-slate-500 font-semibold uppercase mt-0.5">
-                {isPlaying ? 'Streaming Session Audio' : 'Audio Player Paused'}
+              <p className="text-sm text-slate-300 leading-7">
+                {meeting.summary || 'No summary available for this meeting.'}
               </p>
             </div>
-          </div>
+          )}
 
-          {/* Middle Block: Scrubber Progress */}
-          <div className="flex-1 flex items-center gap-3 w-full">
-            <span className="text-xs font-mono font-medium text-slate-400 w-10 shrink-0 text-right">
-              {formatTime(currentTime)}
-            </span>
-            <input
-              type="range"
-              min={0}
-              max={audioDuration || 100}
-              value={currentTime}
-              onChange={handleScrub}
-              className="flex-1 accent-indigo-500 h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer outline-none transition-all"
-            />
-            <span className="text-xs font-mono font-medium text-slate-400 w-10 shrink-0">
-              {formatTime(audioDuration)}
-            </span>
-          </div>
-
-          {/* Right Block: Speed & Volume */}
-          <div className="flex items-center gap-5 justify-between md:justify-start">
-            {/* Speed Multiplier Button */}
-            <button
-              onClick={handleSpeedCycle}
-              className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl text-xs font-mono font-bold border border-slate-700/60 transition-colors shrink-0"
-              title="Playback Speed"
-            >
-              {playbackRate.toFixed(2)}x
-            </button>
-
-            {/* Mute and volume */}
-            <div className="flex items-center gap-2 shrink-0">
-              <button
-                onClick={toggleMute}
-                className="p-2 text-slate-400 hover:text-white bg-slate-800/40 hover:bg-slate-800 rounded-xl border border-slate-800/60 transition-all"
-              >
-                {isMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
-              </button>
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={0.1}
-                value={isMuted ? 0 : volume}
-                onChange={handleVolumeChange}
-                className="w-16 h-1 accent-indigo-500 bg-slate-800 rounded-lg appearance-none cursor-pointer"
-              />
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Mock Mode Notice Box */}
-      {meeting.is_mock && (
-        <div className="p-4 bg-amber-500/5 border border-amber-500/15 rounded-2xl text-xs text-amber-400/90 leading-relaxed shadow-sm">
-          <strong>Notice:</strong> This meeting was processed in <strong>Mock Mode</strong> because the OpenAI API was unreachable or out of credit quota. A simulated transcript, summary, and action items were generated to keep the application fully testable. Configure a valid OpenAI API key in your <code>.env</code> file to run real transcriptions.
-        </div>
-      )}
-
-      {/* Main Grid: Details Panel vs Chat Panel */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
-        {/* Left Side: Summary, Transcripts, Actions (8 cols) */}
-        <div className="lg:col-span-8 flex flex-col glass-panel rounded-3xl overflow-hidden border border-white/5 shadow-xl">
-          {/* Tabs header */}
-          <div className="flex border-b border-slate-800 bg-slate-950/20 overflow-x-auto">
-            {[
-              { id: 'summary', name: 'AI Summary', icon: Sparkles },
-              { id: 'action_items', name: 'Action Items', icon: ClipboardList },
-              { id: 'decisions', name: 'Decisions', icon: CheckCircle },
-              { id: 'transcript', name: 'Transcript', icon: FileText }
-            ].map((tab) => {
-              const TabIcon = tab.icon;
-              return (
-                <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`flex items-center gap-2 px-6 py-4 text-sm font-semibold whitespace-nowrap transition-all border-b-2 outline-none ${
-                    activeTab === tab.id
-                      ? 'border-indigo-500 text-indigo-400 bg-indigo-500/5'
-                      : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-800/20'
-                  }`}
-                >
-                  <TabIcon className="w-4 h-4" />
-                  {tab.name}
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Tab Content body */}
-          <div className="p-6 md:p-8 flex-1 overflow-y-auto max-h-[500px]">
-            {activeTab === 'summary' && (
-              <div className="space-y-4">
-                <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                  <Sparkles className="w-5 h-5 text-indigo-400" />
-                  Meeting TL;DR
-                </h3>
-                <p className="text-slate-300 leading-relaxed text-sm bg-slate-900/30 p-5 rounded-2xl border border-slate-800/40">
-                  {meeting.summary}
-                </p>
-              </div>
-            )}
-
-            {activeTab === 'action_items' && (
-              <div className="space-y-4">
-                <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                  <ClipboardList className="w-5 h-5 text-indigo-400" />
-                  Extracts of Action Items
-                </h3>
-                {meeting.action_items.length === 0 ? (
-                  <p className="text-sm text-slate-500">No action items detected in this meeting.</p>
-                ) : (
-                  <div className="space-y-2.5">
-                    {meeting.action_items.map((item, idx) => (
-                      <div 
-                        key={idx}
-                        onClick={() => toggleCheck(idx)}
-                        className={`flex items-start gap-3 p-4 bg-slate-950/20 border rounded-2xl cursor-pointer select-none transition-colors ${
-                          checkedItems[idx] 
-                            ? 'border-emerald-500/30 bg-emerald-500/5 text-slate-400' 
-                            : 'border-slate-800/80 hover:border-slate-700 text-slate-200'
-                        }`}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={!!checkedItems[idx]}
-                          readOnly
-                          className="mt-1 w-4 h-4 accent-emerald-500 text-white rounded border-slate-800"
-                        />
-                        <span className={`text-sm leading-normal ${checkedItems[idx] ? 'line-through text-slate-500' : ''}`}>
-                          {item}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {activeTab === 'decisions' && (
-              <div className="space-y-4">
-                <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                  <CheckCircle className="w-5 h-5 text-indigo-400" />
-                  Decisions Logged
-                </h3>
-                {meeting.decisions.length === 0 ? (
-                  <p className="text-sm text-slate-500">No major decisions logged from this meeting.</p>
-                ) : (
-                  <ul className="space-y-3">
-                    {meeting.decisions.map((decision, idx) => (
-                      <li 
-                        key={idx}
-                        className="flex items-start gap-3 p-4 bg-slate-900/30 border border-slate-800/50 rounded-2xl text-sm text-slate-300 leading-relaxed"
-                      >
-                        <span className="flex items-center justify-center w-5 h-5 bg-indigo-500/10 text-indigo-400 rounded-full border border-indigo-500/20 text-xs font-bold shrink-0 mt-0.5">
-                          {idx + 1}
-                        </span>
-                        <span>{decision}</span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            )}
-
-            {activeTab === 'transcript' && (
-              <div className="space-y-4">
-                <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                  <FileText className="w-5 h-5 text-indigo-400" />
-                  Full Transcript
-                </h3>
-                <div className="bg-slate-950/40 border border-slate-800/80 p-5 rounded-2xl max-h-[360px] overflow-y-auto">
-                  <p className="text-slate-300 leading-relaxed text-sm whitespace-pre-wrap">
-                    {meeting.transcript || 'No transcript text available.'}
-                  </p>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Right Side: Chat Panel (4 cols) */}
-        <div className="lg:col-span-4 flex flex-col h-[580px] lg:h-auto glass-panel rounded-3xl border border-white/5 shadow-xl overflow-hidden">
-          {/* Header */}
-          <div className="flex items-center gap-2.5 p-4 border-b border-slate-800 bg-slate-950/20">
-            <div className="p-2 bg-indigo-500/10 text-indigo-400 rounded-xl">
-              <MessageSquare className="w-4 h-4" />
-            </div>
-            <div>
-              <h3 className="text-sm font-bold text-white">Chat with Meeting</h3>
-              <p className="text-[10px] text-slate-400 font-medium">Ask questions about this transcript</p>
-            </div>
-          </div>
-
-          {/* Messages */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-950/10">
-            {chats.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-full text-center p-4">
-                <div className="p-3 bg-slate-900 border border-slate-800 text-slate-500 rounded-2xl mb-2">
-                  <MessageSquare className="w-5 h-5" />
-                </div>
-                <h4 className="text-xs font-semibold text-slate-400">Ask a question</h4>
-                <p className="text-[10px] text-slate-500 max-w-[180px] mt-1 leading-normal">
-                  "What deadlines were set?" or "Who is assigned to the API task?"
-                </p>
-              </div>
-            ) : (
-              chats.map((chat, idx) => {
-                const isUser = chat.role === 'user';
-                return (
-                  <div
-                    key={idx}
-                    className={`flex flex-col ${isUser ? 'items-end' : 'items-start'}`}
-                  >
-                    <div
-                      className={`px-4 py-2.5 text-xs leading-relaxed max-w-[85%] shadow-sm ${
-                        isUser
-                          ? 'bg-indigo-600 text-white rounded-2xl rounded-tr-none'
-                          : 'bg-slate-850 border border-slate-800 text-slate-200 rounded-2xl rounded-tl-none'
-                      }`}
-                    >
-                      {chat.content}
+          {/* ACTION ITEMS */}
+          {activeTab === 'actions' && (
+            <div className="space-y-3">
+              {(!meeting.action_items || meeting.action_items.length === 0) ? (
+                <div className="glass-panel rounded-2xl p-8 text-center text-slate-500 text-sm">No action items found.</div>
+              ) : (
+                meeting.action_items.map((item, i) => (
+                  <div key={i} onClick={() => toggleCheck(i)}
+                    className={`glass-panel rounded-xl p-4 flex items-start gap-3 cursor-pointer transition-all duration-200 hover:border-indigo-500/20 ${checkedItems[i] ? 'opacity-60' : ''}`}>
+                    <div className={`mt-0.5 p-1 rounded-lg transition-all ${checkedItems[i] ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-slate-800/60 text-slate-600 border border-slate-700/50'}`}>
+                      <CheckSquare className="w-3.5 h-3.5" />
                     </div>
+                    <p className={`text-sm flex-1 leading-relaxed transition-all ${checkedItems[i] ? 'line-through text-slate-600' : 'text-slate-300'}`}>{item}</p>
+                    <span className="text-[10px] font-bold text-slate-700 bg-slate-900/60 px-2 py-1 rounded-lg shrink-0">#{i + 1}</span>
                   </div>
-                );
-              })
-            )}
-            {chatLoading && (
-              <div className="flex items-center gap-2 bg-slate-850 border border-slate-800 text-slate-400 px-4 py-2.5 rounded-2xl rounded-tl-none w-fit max-w-[85%] text-xs shadow-sm">
-                <div className="flex gap-1">
-                  <span className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-bounce [animation-delay:-0.3s]" />
-                  <span className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-bounce [animation-delay:-0.15s]" />
-                  <span className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-bounce" />
-                </div>
-                <span>Thinking...</span>
-              </div>
-            )}
-            <div ref={chatEndRef} />
-          </div>
-
-          {/* Form input */}
-          <form onSubmit={handleChatSubmit} className="p-3 border-t border-slate-800 bg-slate-950/20">
-            <div className="relative">
-              <input
-                type="text"
-                value={chatInput}
-                onChange={(e) => setChatInput(e.target.value)}
-                placeholder="Ask about this meeting..."
-                disabled={chatLoading}
-                className="w-full pl-4 pr-11 py-3 bg-slate-900 border border-slate-800 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/10 rounded-2xl text-xs text-white placeholder-slate-500 outline-none transition-all"
-              />
-              <button
-                type="submit"
-                disabled={!chatInput.trim() || chatLoading}
-                className="absolute right-1.5 top-1/2 -translate-y-1/2 p-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-600 text-white rounded-xl transition-all"
-              >
-                <Send className="w-3.5 h-3.5" />
-              </button>
+                ))
+              )}
             </div>
-          </form>
+          )}
+
+          {/* DECISIONS */}
+          {activeTab === 'decisions' && (
+            <div className="space-y-3">
+              {(!meeting.decisions || meeting.decisions.length === 0) ? (
+                <div className="glass-panel rounded-2xl p-8 text-center text-slate-500 text-sm">No decisions recorded.</div>
+              ) : (
+                meeting.decisions.map((d, i) => (
+                  <div key={i} className="glass-panel rounded-xl p-4 flex items-start gap-3">
+                    <div className="p-1.5 rounded-lg bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 shrink-0 mt-0.5">
+                      <BadgeCheck className="w-4 h-4" />
+                    </div>
+                    <p className="text-sm text-slate-300 leading-relaxed flex-1">{d}</p>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+
+          {/* TRANSCRIPT */}
+          {activeTab === 'transcript' && (
+            <div className="glass-panel rounded-2xl p-6 border border-white/5">
+              <div className="flex items-center gap-2 mb-4">
+                <FileText className="w-4 h-4 text-slate-500" />
+                <span className="text-xs font-bold text-slate-500 uppercase tracking-widest">Full Transcript</span>
+              </div>
+              <div className="max-h-96 overflow-y-auto pr-2">
+                <p className="text-sm text-slate-400 leading-8 font-mono whitespace-pre-wrap">
+                  {meeting.transcript || 'No transcript available.'}
+                </p>
+              </div>
+            </div>
+          )}
+        </motion.div>
+      </AnimatePresence>
+
+      {/* ── CHAT PANEL ── */}
+      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4, delay: 0.25 }}
+        className="glass-panel rounded-2xl border border-white/5 overflow-hidden">
+
+        {/* Chat Header */}
+        <div className="flex items-center gap-3 p-5 border-b border-white/[0.05]">
+          <div className="p-2 rounded-xl bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+            <Bot className="w-4 h-4" />
+          </div>
+          <div>
+            <p className="text-sm font-bold text-white">Ask AI About This Meeting</p>
+            <p className="text-[10px] text-slate-600 mt-0.5">Powered by LLaMA 3.3 · Grounded in your transcript</p>
+          </div>
         </div>
-      </div>
+
+        {/* Messages */}
+        <div className="h-72 overflow-y-auto p-5 space-y-4">
+          {chatMessages.length === 0 && !chatLoading && (
+            <div className="flex flex-col items-center justify-center h-full text-center gap-2">
+              <MessageSquare className="w-6 h-6 text-slate-700" />
+              <p className="text-xs text-slate-600">Ask anything about this meeting — action items, decisions, who said what...</p>
+            </div>
+          )}
+
+          {chatMessages.map((msg, i) => (
+            <div key={i} className={`flex gap-3 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              {msg.role === 'assistant' && (
+                <div className="w-7 h-7 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 shrink-0 mt-0.5">
+                  <Bot className="w-3.5 h-3.5" />
+                </div>
+              )}
+              <div className={`max-w-[80%] px-4 py-3 rounded-2xl text-xs leading-relaxed ${
+                msg.role === 'user'
+                  ? 'bg-indigo-600 text-white rounded-br-sm'
+                  : 'bg-slate-900/80 text-slate-300 border border-slate-800 rounded-bl-sm'
+              }`}>
+                {msg.content}
+              </div>
+            </div>
+          ))}
+
+          {/* Typing indicator */}
+          {chatLoading && (
+            <div className="flex gap-3 justify-start">
+              <div className="w-7 h-7 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 shrink-0">
+                <Bot className="w-3.5 h-3.5" />
+              </div>
+              <div className="bg-slate-900/80 border border-slate-800 px-4 py-3 rounded-2xl rounded-bl-sm flex items-center gap-1.5">
+                {[0,1,2].map(i => (
+                  <span key={i} className="w-1.5 h-1.5 rounded-full bg-slate-500 animate-bounce"
+                    style={{ animationDelay: `${i * 0.15}s` }} />
+                ))}
+              </div>
+            </div>
+          )}
+          <div ref={chatEndRef} />
+        </div>
+
+        {/* Chat Input */}
+        <div className="border-t border-white/[0.05] p-4">
+          <div className="flex gap-3">
+            <input
+              type="text"
+              value={chatInput}
+              onChange={e => setChatInput(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && !e.shiftKey && sendChat()}
+              placeholder="Ask about this meeting..."
+              className="input-field flex-1 text-xs"
+              disabled={chatLoading}
+            />
+            <button
+              onClick={sendChat}
+              disabled={!chatInput.trim() || chatLoading}
+              className="p-3 bg-gradient-to-br from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 disabled:from-slate-800 disabled:to-slate-800 disabled:text-slate-600 text-white rounded-xl shadow-lg shadow-indigo-600/20 transition-all disabled:cursor-not-allowed">
+              <Send className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      </motion.div>
     </div>
   );
 };
