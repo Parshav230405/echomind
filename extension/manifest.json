@@ -11,8 +11,8 @@
     "tabs"
   ],
   "host_permissions": [
-    "http://localhost:3000/*",
-    "http://localhost:5000/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*",
     "https://meet.google.com/*",
     "https://*.zoom.us/*",
     "https://teams.microsoft.com/*",
@@ -28,7 +28,8 @@
   "content_scripts": [
     {
       "matches": [
-        "http://localhost:3000/*",
+        "http://localhost/*",
+        "http://127.0.0.1/*",
         "https://meet.google.com/*",
         "https://*.zoom.us/*",
         "https://teams.microsoft.com/*",
