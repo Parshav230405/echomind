@@ -75,7 +75,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         // Query active tab to ensure we capture the correct one
-        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
           if (!tabs || tabs.length === 0) {
             showStatus('No active tab found to record.', true);
             return;
@@ -253,7 +253,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (typeof chrome === 'undefined' || !chrome.tabs || !chrome.scripting) return;
       
       const tabs = await new Promise((resolve) => {
-        chrome.tabs.query({ active: true, currentWindow: true }, resolve);
+        chrome.tabs.query({ active: true, lastFocusedWindow: true }, resolve);
       });
       if (!tabs || tabs.length === 0) return;
       const activeTab = tabs[0];
