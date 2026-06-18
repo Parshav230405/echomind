@@ -17,11 +17,16 @@ export const Sidebar = ({ currentView, onViewChange }) => {
 
   const isActive = (id) => {
     if (id === 'dashboard') return currentView === 'dashboard';
+    if (id === 'record') return currentView === 'dashboard-record';
     return false;
   };
 
   const handleNav = (id) => {
-    onViewChange('dashboard');
+    if (id === 'record') {
+      onViewChange('dashboard-record');
+    } else {
+      onViewChange('dashboard');
+    }
     setMobileOpen(false);
   };
 

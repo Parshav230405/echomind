@@ -70,7 +70,12 @@ const AppContent = () => {
               exit={{ opacity: 0, y: -12 }}
               transition={{ duration: 0.22, ease: 'easeInOut' }}
             >
-              {view === 'dashboard' && <Dashboard onViewChange={setView} />}
+              {view.startsWith('dashboard') && (
+                <Dashboard
+                  initialTab={view === 'dashboard-record' ? 'record' : 'upload'}
+                  onViewChange={setView}
+                />
+              )}
               {isMeetingView && activeMeetingId && (
                 <Meeting meetingId={activeMeetingId} onViewChange={setView} />
               )}

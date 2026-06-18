@@ -94,23 +94,21 @@ if (isMeetingSite) {
   }, 2000);
 
   function detectActiveMeeting() {
+    const path = window.location.pathname;
+    const href = window.location.href;
+
     if (HOSTNAME.includes('meet.google.com')) {
-      // Check for Google Meet call controls
-      return !!document.querySelector('[data-call-ended="false"]') ||
-             !!document.querySelector('[aria-label="Leave call"]') ||
-             !!document.querySelector('[data-meeting-title]');
+      // Meet links are structured as meet.google.com/xxx-xxxx-xxx
+      const meetCodePattern = /^\/[a-z]{3}-[a-z]{4}-[a-z]{3}$/;
+      return meetCodePattern.test(path) || path.includes('/lookup/') || !!document.querySelector('[aria-label="Leave call"]');
     }
     if (HOSTNAME.includes('zoom.us')) {
-      // Zoom Web Client controls
-      return !!document.querySelector('#wc-footer') || 
-             !!document.querySelector('.meeting-info-container') ||
-             HOSTNAME.includes('/wc/');
+      // Zoom Web Client, joins, or recordings
+      return href.includes('/wc/') || href.includes('/j/') || href.includes('/rec/') || !!document.querySelector('#wc-footer');
     }
     if (HOSTNAME.includes('teams.microsoft.com') || HOSTNAME.includes('teams.live.com')) {
-      // Teams Web Client call controls
-      return !!document.querySelector('[data-tid="hangup-button"]') ||
-             !!document.querySelector('#hangup-button') ||
-             !!document.querySelector('.ts-calling-screen');
+      // Teams Web meeting pages
+      return href.includes('/meetup-join/') || href.includes('calling') || !!document.querySelector('[data-tid="hangup-button"]');
     }
     return false;
   }

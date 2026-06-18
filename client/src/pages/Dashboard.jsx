@@ -82,7 +82,7 @@ const MeetingCard = ({ meeting, onView, onDelete, index }) => {
   );
 };
 
-export const Dashboard = ({ onViewChange }) => {
+export const Dashboard = ({ onViewChange, initialTab = 'upload' }) => {
   const { apiFetch, user } = useAuth();
   const [meetings, setMeetings] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -91,9 +91,13 @@ export const Dashboard = ({ onViewChange }) => {
   const [dragActive, setDragActive] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(null);
   const [uploadError, setUploadError] = useState(null);
-  const [activeTab, setActiveTab] = useState('upload');
+  const [activeTab, setActiveTab] = useState(initialTab);
   const [search, setSearch] = useState('');
   const fileInputRef = useRef(null);
+
+  useEffect(() => {
+    setActiveTab(initialTab);
+  }, [initialTab]);
 
   const fetchMeetings = async () => {
     try {
