@@ -43,6 +43,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Initial UI check (Wrapped in try-catch so it never halts execution)
   checkState().catch(err => console.error('[EchoMind] checkState error:', err));
 
+  // Sync from the active tab if it is the EchoMind app page (foolproof backup sync)
+  syncFromActiveTab().catch(err => console.error('[EchoMind] Active tab sync failed:', err));
+
   // Poll state occasionally while popup is open to keep timer and details synced
   const statePoller = setInterval(() => {
     checkState().catch(err => console.error('[EchoMind] Poll error:', err));
@@ -242,5 +245,76 @@ document.addEventListener('DOMContentLoaded', async () => {
     const m = Math.floor(secs / 60);
     const s = secs % 60;
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  }
+
+  // Active tab direct sync scripting fallback
+  async function syncFromActiveTab() {
+    try {
+      if (typeof chrome === 'undefined' || !chrome.tabs || !chrome.scripting) return;
+      
+      const tabs = await new Promise((resolve) => {
+        chrome.tabs.query({ active: true, currentWindow: true }, resolve);
+      });
+      if (!tabs || tabs.length === 0) return;
+      const activeTab = tabs[0];
+      if (!activeTab.url) return;
+
+      const url = activeTab.url;
+      const isEchoMindPage = url.includes('localhost') || url.includes('127.0.0.1') || url.includes('echomind');
+
+      if (isEchoMindPage) {
+        console.log('[EchoMind Popup] Active tab matches application URL. Executing storage sync script...');
+        chrome.scripting.executeScript({
+          target: { tabId: activeTab.id },
+          func: () => {
+            return {
+              token: localStorage.getItem('echomind_token'),
+              origin: window.location.origin
+            };
+          }
+        }, async (results) => {
+          if (results && results[0] && results[0].result) {
+            const { token, origin } = results[0].result;
+            if (token) {
+              console.log('[EchoMind Popup] Token successfully retrieved directly from tab localStorage.');
+              const payloadBase64 = token.split('.')[1];
+              const payload = JSON.parse(atob(payloadBase64));
+
+              let apiUrl = origin;
+              if (origin.includes(':3000')) {
+                apiUrl = origin.replace(':3000', ':5000');
+              }
+
+              // Update popup storage values
+              await chrome.storage.local.set({
+                echomind_token: token,
+                api_url: apiUrl,
+                user_profile: { id: payload.userId, name: 'Active Session' }
+              });
+
+              // Try fetching full profile to sync name
+              try {
+                const res = await fetch(`${apiUrl}/api/auth/me`, {
+                  headers: { 'Authorization': `Bearer ${token}` }
+                });
+                const data = await res.json();
+                if (data.user) {
+                  await chrome.storage.local.set({ user_profile: data.user });
+                }
+              } catch (e) {
+                console.warn('[EchoMind Popup] Direct profile fetch offline fallback:', e);
+              }
+
+              // Refresh UI
+              checkState().catch(err => console.error(err));
+            } else {
+              console.log('[EchoMind Popup] No token found in active tab localStorage.');
+            }
+          }
+        });
+      }
+    } catch (err) {
+      console.warn('[EchoMind Popup] Active tab sync failed:', err);
+    }
   }
 });
